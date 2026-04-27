@@ -41,6 +41,26 @@
 				<USelect v-model="selectedFormat" :items="formats" size="lg" value-key="value" label-key="label" />
 			</UFormField>
 
+			<UFormField label="Navigateur pour les cookies" name="browser">
+				<USelect v-model="selectedBrowser" :items="browsers" size="lg" value-key="value" label-key="label" />
+			</UFormField>
+
+			<UFormField
+				v-if="selectedBrowser === '__file__'"
+				label="Chemin vers le fichier cookies.txt"
+				name="cookiesFile"
+				description="Exporte tes cookies YouTube depuis Chrome avec l'extension « Get cookies.txt LOCALLY »"
+			>
+				<UInput
+					v-model="cookiesFile"
+					placeholder="/Users/toi/Downloads/cookies.txt"
+					size="lg"
+					leading-icon="lucide:file"
+				/>
+			</UFormField>
+
+			<UCheckbox v-model="noPlaylist" label="Vidéo seule (ignorer la playlist)" />
+
 			<UButton
 				size="lg"
 				block
@@ -98,9 +118,26 @@
 		{ label: "Audio seulement (MP3)", value: "bestaudio[ext=m4a]/bestaudio" }
 	];
 
+	const browsers: { label: string; value: string }[] = [
+		{ label: "Chrome", value: "chrome" },
+		{ label: "Firefox", value: "firefox" },
+		{ label: "Brave", value: "brave" },
+		{ label: "Fichier cookies.txt…", value: "__file__" },
+		{ label: "Aucun", value: "" }
+	];
+
+	const FFMPEG_LOCATIONS: Record<string, string> = {
+		macos: "/opt/homebrew/bin",
+		linux: "/usr/bin",
+		windows: "C:\\ffmpeg\\bin"
+	};
+
 	const urlInputRef = ref<any>(null);
 	const url = ref("");
 	const selectedFormat = ref<string>(formats[0]!.value);
+	const selectedBrowser = ref<string>("chrome");
+	const cookiesFile = ref("");
+	const noPlaylist = ref(true);
 	const isDragging = ref(false);
 	const isDownloading = ref(false);
 	const output = ref("");
@@ -122,12 +159,30 @@
 	const download = async () => {
 		if (!isValidUrl.value || isDownloading.value) return;
 
+		const platform = await useTauriOsPlatform();
 		const isAudioOnly = selectedFormat.value.startsWith("bestaudio");
 		const outputTemplate = "~/Downloads/%(title)s.%(ext)s";
+		const ffmpegLocation = FFMPEG_LOCATIONS[platform] ?? "";
 
-		const args = isAudioOnly
-			? ["-f", selectedFormat.value, "--extract-audio", "--audio-format", "mp3", "-o", outputTemplate, url.value.trim()]
-			: ["-f", selectedFormat.value, "--merge-output-format", "mp4", "-o", outputTemplate, url.value.trim()];
+		const args: string[] = [];
+
+		if (ffmpegLocation) args.push("--ffmpeg-location", ffmpegLocation);
+		if (selectedBrowser.value === "__file__" && cookiesFile.value.trim()) {
+			args.push("--cookies", cookiesFile.value.trim());
+		} else if (selectedBrowser.value && selectedBrowser.value !== "__file__") {
+			args.push("--cookies-from-browser", selectedBrowser.value);
+		}
+		if (noPlaylist.value) args.push("--no-playlist");
+
+		args.push("-f", selectedFormat.value);
+
+		if (isAudioOnly) {
+			args.push("--extract-audio", "--audio-format", "mp3");
+		} else {
+			args.push("--merge-output-format", "mp4");
+		}
+
+		args.push("-o", outputTemplate, url.value.trim());
 
 		isDownloading.value = true;
 		output.value = "";
@@ -144,23 +199,21 @@
 				output.value += line + "\n";
 			});
 
-			const result = await new Promise<{ code: number | null }>((resolve) => {
-				command.on("close", (data: { code: number | null }) => resolve(data));
-				command.spawn().catch((err: Error) => {
-					errorMsg.value = `Impossible de lancer yt-dlp : ${err.message}`;
-					isDownloading.value = false;
-					resolve({ code: 1 });
-				});
+			const { code } = await new Promise<{ code: number | null }>((resolve, reject) => {
+				command.on("close", resolve);
+				command.on("error", reject);
+				command.spawn().catch(reject);
 			});
 
-			if (result.code === 0) {
+			if (code === 0) {
 				successMsg.value = "Téléchargement terminé ! Fichier enregistré dans Téléchargements.";
 				url.value = "";
 			} else {
 				errorMsg.value = "Le téléchargement a échoué. Consultez le journal ci-dessous.";
 			}
 		} catch (err: any) {
-			errorMsg.value = `Erreur : ${err?.message ?? err}`;
+			errorMsg.value = `Impossible de lancer yt-dlp : ${err?.message ?? err}`;
+			output.value += String(err);
 		} finally {
 			isDownloading.value = false;
 		}

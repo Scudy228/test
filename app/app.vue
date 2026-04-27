@@ -1,11 +1,7 @@
 <template>
-	<Html class="overflow-x-hidden">
-		<Body class="font-sans antialiased">
-			<UApp>
-				<NuxtLayout>
-					<NuxtPage />
-				</NuxtLayout>
-			</UApp>
-		</Body>
-	</Html>
+	<UApp>
+		<NuxtLayout>
+			<NuxtPage />
+		</NuxtLayout>
+	</UApp>
 </template>
